@@ -1,0 +1,171 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAppAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/appAdmins/$(request.auth.uid));
+    }
+
+    // A helper to safely check a document's field, returning empty string if it doesn't exist
+    function teacherBranch() {
+      return exists(/databases/$(database)/documents/teachers/$(request.auth.uid)) 
+        ? get(/databases/$(database)/documents/teachers/$(request.auth.uid)).data.branchId 
+        : '';
+    }
+    
+    function teacherInstitution() {
+      return exists(/databases/$(database)/documents/teachers/$(request.auth.uid)) 
+        ? get(/databases/$(database)/documents/teachers/$(request.auth.uid)).data.institutionId 
+        : '';
+    }
+
+    function isTeacherInBranch(branchId) {
+      return isAppAdmin() || (signedIn() && teacherBranch() == branchId);
+    }
+    
+    function isTeacherInInstitution(institutionId) {
+      return isAppAdmin() || (signedIn() && teacherInstitution() == institutionId);
+    }
+
+    // --- RULES ---
+
+    match /appAdmins/{adminId} {
+      // Allow reading appAdmins to check if you are one.
+      allow read: if signedIn();
+      allow write: if isAppAdmin();
+    }
+
+    match /institutionInvites/{inviteId} {
+      allow read: if signedIn();
+      // Allow creating the DEFAULT invite so the app can auto-seed an empty database
+      allow write: if isAppAdmin() || request.resource.data.institutionId == 'DEFAULT';
+    }
+
+    match /teacherInvites/{inviteId} {
+      allow read: if signedIn();
+      // Allow creating the DEFAULT invite so the app can auto-seed an empty database
+      allow write: if isAppAdmin() || request.resource.data.institutionId == 'DEFAULT';
+    }
+
+    match /institutions/{institutionId} {
+      allow read: if signedIn();
+      // Allow creating the DEFAULT institution
+      allow create: if isAppAdmin() || institutionId == 'DEFAULT';
+      allow update, delete: if isAppAdmin();
+    }
+
+    match /branches/{branchId} {
+      allow read: if signedIn();
+      // Allow creating the DEFAULT branch
+      allow create: if isAppAdmin() || branchId == 'DEFAULT_MAIN_BRANCH';
+      allow update, delete: if isAppAdmin();
+    }
+
+    match /teachers/{teacherId} {
+      allow read: if signedIn();
+      // A user can create their own teacher profile.
+      allow create: if isAppAdmin() 
+        || (signedIn() && request.auth.uid == teacherId && request.resource.data.role == 'teacher');
+      allow update: if isAppAdmin() 
+        || (signedIn() && request.auth.uid == teacherId);
+      allow delete: if isAppAdmin();
+    }
+
+    match /students/{studentId} {
+      allow read: if signedIn();
+      
+      allow create: if isAppAdmin() 
+        || isTeacherInBranch(request.resource.data.branchId) 
+        || (signedIn() && request.auth.uid == studentId && request.resource.data.role == 'student');
+        
+      allow update: if isAppAdmin() 
+        || isTeacherInBranch(resource.data.branchId) 
+        || (signedIn() && request.auth.uid == studentId);
+        
+      allow delete: if isAppAdmin() 
+        || isTeacherInBranch(resource.data.branchId);
+    }
+
+    match /classes/{classId} {
+      allow read: if signedIn();
+      
+      allow create: if isAppAdmin() 
+        || isTeacherInBranch(request.resource.data.branchId);
+        
+      allow update: if isAppAdmin() 
+        || isTeacherInBranch(resource.data.branchId);
+        
+      allow delete: if isAppAdmin() 
+        || isTeacherInBranch(resource.data.branchId);
+    }
+
+    match /attendance/{attendanceId} {
+      allow read: if signedIn();
+      
+      allow create: if isAppAdmin() 
+        || isTeacherInBranch(request.resource.data.branchId);
+        
+      allow update: if isAppAdmin() 
+        || isTeacherInBranch(resource.data.branchId);
+        
+      allow delete: if isAppAdmin() 
+        || isTeacherInBranch(resource.data.branchId);
+    }
+
+    match /marks/{markId} {
+      allow read: if signedIn();
+
+      allow create: if isAppAdmin()
+        || isTeacherInBranch(request.resource.data.branchId);
+
+      allow update: if isAppAdmin()
+        || isTeacherInBranch(resource.data.branchId);
+
+      allow delete: if isAppAdmin()
+        || isTeacherInBranch(resource.data.branchId);
+    }
+
+    match /fees/{feeId} {
+      allow read: if signedIn();
+
+      allow create: if isAppAdmin()
+        || isTeacherInBranch(request.resource.data.branchId);
+
+      allow update: if isAppAdmin()
+        || isTeacherInBranch(resource.data.branchId);
+
+      allow delete: if isAppAdmin()
+        || isTeacherInBranch(resource.data.branchId);
+    }
+
+    match /classExams/{examId} {
+      allow read: if signedIn();
+
+      allow create: if isAppAdmin()
+        || isTeacherInBranch(request.resource.data.branchId);
+
+      allow update: if isAppAdmin()
+        || isTeacherInBranch(resource.data.branchId);
+
+      allow delete: if isAppAdmin()
+        || isTeacherInBranch(resource.data.branchId);
+    }
+
+    match /classFeeCategories/{categoryId} {
+      allow read: if signedIn();
+
+      allow create: if isAppAdmin()
+        || isTeacherInBranch(request.resource.data.branchId);
+
+      allow update: if isAppAdmin()
+        || isTeacherInBranch(resource.data.branchId);
+
+      allow delete: if isAppAdmin()
+        || isTeacherInBranch(resource.data.branchId);
+    }
+  }
+}

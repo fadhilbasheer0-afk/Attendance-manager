@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "firebase deploy --only firestore:rules": "tuition-attendance-9a2b1"
+  },
+  "targets": {},
+  "etags": {}
+}
