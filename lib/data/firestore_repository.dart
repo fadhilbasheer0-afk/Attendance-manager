@@ -8,6 +8,7 @@ import '../models/attendance_record.dart';
 import '../models/attendance_status.dart';
 import '../models/branch.dart';
 import '../models/class_model.dart';
+import '../models/class_attendance_session.dart';
 import '../models/institution.dart';
 import '../models/student.dart';
 import '../models/teacher.dart';
@@ -46,6 +47,8 @@ class FirestoreRepository {
       _db.collection('attendance');
   CollectionReference<Map<String, dynamic>> get _classes =>
       _db.collection('classes');
+  CollectionReference<Map<String, dynamic>> get _classAttendanceSessions =>
+      _db.collection('classAttendanceSessions');
   CollectionReference<Map<String, dynamic>> get _branches =>
       _db.collection('branches');
   CollectionReference<Map<String, dynamic>> get _institutions =>
@@ -539,6 +542,7 @@ class FirestoreRepository {
     required String whatsappLink,
     required String branchId,
     required int colorValue,
+    AttendanceMode attendanceMode = AttendanceMode.daily,
   }) async {
     final cleanedBranchId = branchId.trim();
     final branch = await branchById(cleanedBranchId);
@@ -554,6 +558,7 @@ class FirestoreRepository {
       institutionId: branch.institutionId,
       branchId: cleanedBranchId,
       colorValue: colorValue,
+      attendanceMode: attendanceMode,
     );
     await docRef.set(c.toMap());
   }
@@ -565,18 +570,23 @@ class FirestoreRepository {
     required String whatsappLink,
     required String branchId,
     required int colorValue,
+    AttendanceMode? attendanceMode,
   }) async {
     final cleanedBranchId = branchId.trim();
     final branch = await branchById(cleanedBranchId);
     if (branch == null) {
       throw ArgumentError('Invalid branch ID: $cleanedBranchId');
     }
-    await _classes.doc(id).update({
+    final updateData = <String, dynamic>{
       'className': className.trim(),
       'medium': medium.trim(),
       'whatsappLink': whatsappLink.trim(),
       'colorValue': colorValue,
-    });
+    };
+    if (attendanceMode != null) {
+      updateData['attendanceMode'] = attendanceMode.firestoreValue;
+    }
+    await _classes.doc(id).update(updateData);
   }
 
   Future<void> deleteClass(String id) async {
@@ -631,6 +641,7 @@ class FirestoreRepository {
     required String studentId,
     required String branchId,
     required DateTime dayUtc,
+    AttendanceSession session = AttendanceSession.daily,
   }) async {
     final start =
         Timestamp.fromDate(DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day));
@@ -641,6 +652,7 @@ class FirestoreRepository {
         .where('branchId', isEqualTo: branchId)
         .where('date', isGreaterThanOrEqualTo: start)
         .where('date', isLessThan: end)
+        .where('session', isEqualTo: session.firestoreValue)
         .limit(5)
         .get();
     return snap.docs.map(AttendanceRecord.fromDoc).toList();
@@ -652,16 +664,18 @@ class FirestoreRepository {
     required DateTime dayUtc,
     required AttendanceStatus status,
     String? markedByTeacherId,
+    AttendanceSession session = AttendanceSession.daily,
   }) async {
     final marker = markedByTeacherId ?? currentUid;
     if (marker == null || marker.isEmpty) {
       throw StateError('Not signed in');
     }
     final day = DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day);
-    final existing = await attendanceForStudentOnDate(
+    final existing = await attendanceForStudentOnDateWithSession(
       studentId: studentId,
       branchId: branchId,
       dayUtc: day,
+      session: session,
     );
     final branch = await branchById(branchId);
     final data = AttendanceRecord(
@@ -670,6 +684,7 @@ class FirestoreRepository {
       institutionId: branch?.institutionId ?? '',
       branchId: branchId,
       date: day,
+      session: session,
       status: status,
       markedBy: marker,
     ).toFirestore();
@@ -684,6 +699,7 @@ class FirestoreRepository {
   Stream<List<AttendanceRecord>> watchAttendanceForBranchOnDate({
     required String branchId,
     required DateTime dayUtc,
+    AttendanceSession session = AttendanceSession.daily,
   }) {
     final cleanedBranchId = branchId.trim();
     final start =
@@ -694,6 +710,7 @@ class FirestoreRepository {
         .where('branchId', isEqualTo: cleanedBranchId)
         .where('date', isGreaterThanOrEqualTo: start)
         .where('date', isLessThan: end)
+        .where('session', isEqualTo: session.firestoreValue)
         .snapshots()
         .map((s) => s.docs.map(AttendanceRecord.fromDoc).toList());
   }
@@ -702,14 +719,17 @@ class FirestoreRepository {
     required String studentId,
     required String branchId,
     int limit = 120,
+    AttendanceSession? session,
   }) {
-    return _attendance
+    var query = _attendance
         .where('studentId', isEqualTo: studentId)
         .where('branchId', isEqualTo: branchId)
         .orderBy('date', descending: true)
-        .limit(limit)
-        .snapshots()
-        .map((s) => s.docs.map(AttendanceRecord.fromDoc).toList());
+        .limit(limit);
+    if (session != null) {
+      query = query.where('session', isEqualTo: session.firestoreValue);
+    }
+    return query.snapshots().map((s) => s.docs.map(AttendanceRecord.fromDoc).toList());
   }
 
   /// Fetches all attendance records for [branchId] in the given [year]/[month].
@@ -717,6 +737,7 @@ class FirestoreRepository {
     required String branchId,
     required int year,
     required int month,
+    AttendanceSession? session,
   }) {
     final cleanedBranchId = branchId.trim();
     final start = Timestamp.fromDate(DateTime.utc(year, month, 1));
@@ -725,12 +746,14 @@ class FirestoreRepository {
           ? DateTime.utc(year, month + 1, 1)
           : DateTime.utc(year + 1, 1, 1),
     );
-    return _attendance
+    var query = _attendance
         .where('branchId', isEqualTo: cleanedBranchId)
         .where('date', isGreaterThanOrEqualTo: start)
-        .where('date', isLessThan: end)
-        .snapshots()
-        .map((s) => s.docs.map(AttendanceRecord.fromDoc).toList());
+        .where('date', isLessThan: end);
+    if (session != null) {
+      query = query.where('session', isEqualTo: session.firestoreValue);
+    }
+    return query.snapshots().map((s) => s.docs.map(AttendanceRecord.fromDoc).toList());
   }
 
   /// Students filtered by branch, class name, and medium.
@@ -787,6 +810,7 @@ class FirestoreRepository {
         institutionId: branch?.institutionId ?? '',
         branchId: branchId,
         date: day,
+        session: AttendanceSession.daily,
         status: status,
         markedBy: marker,
       ).toFirestore();
@@ -798,6 +822,319 @@ class FirestoreRepository {
       }
     }
     await batch.commit();
+  }
+
+  /// Upserts attendance for a specific session (FN/AN/daily)
+  Future<void> upsertAttendanceWithSession({
+    required String studentId,
+    required String branchId,
+    required DateTime dayUtc,
+    required AttendanceSession session,
+    required AttendanceStatus status,
+    String? markedByTeacherId,
+  }) async {
+    final marker = markedByTeacherId ?? currentUid;
+    if (marker == null || marker.isEmpty) {
+      throw StateError('Not signed in');
+    }
+    final day = DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day);
+    final existing = await attendanceForStudentOnDateWithSession(
+      studentId: studentId,
+      branchId: branchId,
+      dayUtc: day,
+      session: session,
+    );
+    final branch = await branchById(branchId);
+    final data = AttendanceRecord(
+      id: '',
+      studentId: studentId,
+      institutionId: branch?.institutionId ?? '',
+      branchId: branchId,
+      date: day,
+      session: session,
+      status: status,
+      markedBy: marker,
+    ).toFirestore();
+
+    if (existing.isNotEmpty) {
+      await _attendance.doc(existing.first.id).update(data);
+    } else {
+      await _attendance.add(data);
+    }
+  }
+
+  /// Fetches attendance for a student on a specific date and session
+  Future<List<AttendanceRecord>> attendanceForStudentOnDateWithSession({
+    required String studentId,
+    required String branchId,
+    required DateTime dayUtc,
+    required AttendanceSession session,
+  }) async {
+    final start =
+        Timestamp.fromDate(DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day));
+    final end = Timestamp.fromDate(
+        DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day + 1));
+    final snap = await _attendance
+        .where('studentId', isEqualTo: studentId)
+        .where('branchId', isEqualTo: branchId)
+        .where('date', isGreaterThanOrEqualTo: start)
+        .where('date', isLessThan: end)
+        .where('session', isEqualTo: session.firestoreValue)
+        .limit(5)
+        .get();
+    return snap.docs.map(AttendanceRecord.fromDoc).toList();
+  }
+
+  /// Watches attendance for a branch on a specific date and session
+  Stream<List<AttendanceRecord>> watchAttendanceForBranchOnDateWithSession({
+    required String branchId,
+    required DateTime dayUtc,
+    required AttendanceSession session,
+  }) {
+    final cleanedBranchId = branchId.trim();
+    final start =
+        Timestamp.fromDate(DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day));
+    final end = Timestamp.fromDate(
+        DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day + 1));
+    return _attendance
+        .where('branchId', isEqualTo: cleanedBranchId)
+        .where('date', isGreaterThanOrEqualTo: start)
+        .where('date', isLessThan: end)
+        .where('session', isEqualTo: session.firestoreValue)
+        .snapshots()
+        .map((s) => s.docs.map(AttendanceRecord.fromDoc).toList());
+  }
+
+  /// Watches attendance for a branch in a month with session filter
+  Stream<List<AttendanceRecord>> watchAttendanceForBranchInMonthWithSession({
+    required String branchId,
+    required int year,
+    required int month,
+    required AttendanceSession session,
+  }) {
+    final cleanedBranchId = branchId.trim();
+    final start = Timestamp.fromDate(DateTime.utc(year, month, 1));
+    final end = Timestamp.fromDate(
+      month < 12
+          ? DateTime.utc(year, month + 1, 1)
+          : DateTime.utc(year + 1, 1, 1),
+    );
+    return _attendance
+        .where('branchId', isEqualTo: cleanedBranchId)
+        .where('date', isGreaterThanOrEqualTo: start)
+        .where('date', isLessThan: end)
+        .where('session', isEqualTo: session.firestoreValue)
+        .snapshots()
+        .map((s) => s.docs.map(AttendanceRecord.fromDoc).toList());
+  }
+
+  /// Bulk upsert attendance for a specific session
+  Future<void> bulkUpsertAttendanceWithSession({
+    required List<String> studentIds,
+    required String branchId,
+    required DateTime dayUtc,
+    required AttendanceSession session,
+    required AttendanceStatus status,
+  }) async {
+    final marker = currentUid;
+    if (marker == null || marker.isEmpty) throw StateError('Not signed in');
+    final day = DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day);
+
+    final start = Timestamp.fromDate(day);
+    final end = Timestamp.fromDate(day.add(const Duration(days: 1)));
+
+    final existingSnap = await _attendance
+        .where('branchId', isEqualTo: branchId)
+        .where('date', isGreaterThanOrEqualTo: start)
+        .where('date', isLessThan: end)
+        .where('session', isEqualTo: session.firestoreValue)
+        .get();
+
+    final existingMap = {
+      for (final d in existingSnap.docs) (d.data()['studentId'] as String): d.id
+    };
+
+    final batch = _db.batch();
+    for (final sid in studentIds) {
+      final branch = await branchById(branchId);
+      final data = AttendanceRecord(
+        id: '',
+        studentId: sid,
+        institutionId: branch?.institutionId ?? '',
+        branchId: branchId,
+        date: day,
+        session: session,
+        status: status,
+        markedBy: marker,
+      ).toFirestore();
+
+      if (existingMap.containsKey(sid)) {
+        batch.update(_attendance.doc(existingMap[sid]), data);
+      } else {
+        batch.set(_attendance.doc(), data);
+      }
+    }
+    await batch.commit();
+  }
+
+  // ==========================================
+  // Class Attendance Sessions (Session-level status)
+  // ==========================================
+
+  /// Gets the session status for a class on a specific date and session
+  Future<ClassAttendanceSession?> getClassAttendanceSession({
+    required String classId,
+    required DateTime dayUtc,
+    required AttendanceSession session,
+  }) async {
+    final day = DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day);
+    final key = '${classId}_${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}_${session.firestoreValue}';
+    final doc = await _classAttendanceSessions.doc(key).get();
+    if (!doc.exists || doc.data() == null) return null;
+    return ClassAttendanceSession.fromDoc(doc);
+  }
+
+  /// Watches the session status for a class on a specific date and session
+  Stream<ClassAttendanceSession?> watchClassAttendanceSession({
+    required String classId,
+    required DateTime dayUtc,
+    required AttendanceSession session,
+  }) {
+    final day = DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day);
+    final key = '${classId}_${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}_${session.firestoreValue}';
+    return _classAttendanceSessions.doc(key).snapshots().map((doc) {
+      if (!doc.exists || doc.data() == null) return null;
+      return ClassAttendanceSession.fromDoc(doc);
+    });
+  }
+
+  /// Watches all session statuses for a class in a month
+  Stream<List<ClassAttendanceSession>> watchClassAttendanceSessionsInMonth({
+    required String classId,
+    required int year,
+    required int month,
+  }) {
+    final start = Timestamp.fromDate(DateTime.utc(year, month, 1));
+    final end = Timestamp.fromDate(
+      month < 12
+          ? DateTime.utc(year, month + 1, 1)
+          : DateTime.utc(year + 1, 1, 1),
+    );
+    return _classAttendanceSessions
+        .where('classId', isEqualTo: classId)
+        .where('date', isGreaterThanOrEqualTo: start)
+        .where('date', isLessThan: end)
+        .snapshots()
+        .map((s) => s.docs.map(ClassAttendanceSession.fromDoc).toList());
+  }
+
+  /// Sets the session status for a class (completed/no_class/not_marked)
+  Future<void> setClassAttendanceSessionStatus({
+    required String classId,
+    required String branchId,
+    required DateTime dayUtc,
+    required AttendanceSession session,
+    required AttendanceSessionStatus status,
+  }) async {
+    final marker = currentUid;
+    if (marker == null || marker.isEmpty) throw StateError('Not signed in');
+    final day = DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day);
+    final branch = await branchById(branchId);
+    final institutionId = branch?.institutionId ?? '';
+    final key = '${classId}_${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}_${session.firestoreValue}';
+    final now = DateTime.now();
+
+    final existingDoc = await _classAttendanceSessions.doc(key).get();
+    if (existingDoc.exists) {
+      await _classAttendanceSessions.doc(key).update({
+        'status': status.firestoreValue,
+        'markedBy': marker,
+        'updatedAt': Timestamp.fromDate(now),
+      });
+    } else {
+      final sessionRecord = ClassAttendanceSession(
+        id: key,
+        classId: classId,
+        institutionId: institutionId,
+        branchId: branchId,
+        date: day,
+        session: session,
+        status: status,
+        markedBy: marker,
+        createdAt: now,
+        updatedAt: now,
+      );
+      await _classAttendanceSessions.doc(key).set(sessionRecord.toFirestore());
+    }
+  }
+
+  /// Marks an entire session as No Class and clears individual attendance records
+  Future<void> markSessionAsNoClass({
+    required String classId,
+    required String branchId,
+    required String className,
+    required String medium,
+    required DateTime dayUtc,
+    required AttendanceSession session,
+  }) async {
+    final marker = currentUid;
+    if (marker == null || marker.isEmpty) throw StateError('Not signed in');
+    final day = DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day);
+
+    // First, set the session status to no_class
+    await setClassAttendanceSessionStatus(
+      classId: classId,
+      branchId: branchId,
+      dayUtc: day,
+      session: session,
+      status: AttendanceSessionStatus.noClass,
+    );
+
+    // Then, delete all individual attendance records for this class/date/session
+    // to ensure they don't affect reports
+    final start = Timestamp.fromDate(day);
+    final end = Timestamp.fromDate(day.add(const Duration(days: 1)));
+    final attendanceSnap = await _attendance
+        .where('branchId', isEqualTo: branchId)
+        .where('date', isGreaterThanOrEqualTo: start)
+        .where('date', isLessThan: end)
+        .where('session', isEqualTo: session.firestoreValue)
+        .get();
+
+    // Filter by className and medium since attendance doesn't store classId directly
+    // We need to check student's class
+    final studentsSnap = await _students
+        .where('branchId', isEqualTo: branchId)
+        .where('className', isEqualTo: className)
+        .where('medium', isEqualTo: medium)
+        .get();
+    final studentIdsInClass = studentsSnap.docs.map((d) => d.id).toSet();
+
+    final batch = _db.batch();
+    for (final doc in attendanceSnap.docs) {
+      final studentId = doc.data()['studentId'] as String?;
+      if (studentId != null && studentIdsInClass.contains(studentId)) {
+        batch.delete(doc.reference);
+      }
+    }
+    await batch.commit();
+  }
+
+  /// Restores a session from No Class to Not Marked (allows re-marking attendance)
+  Future<void> restoreSessionFromNoClass({
+    required String classId,
+    required String branchId,
+    required DateTime dayUtc,
+    required AttendanceSession session,
+  }) async {
+    final day = DateTime.utc(dayUtc.year, dayUtc.month, dayUtc.day);
+    await setClassAttendanceSessionStatus(
+      classId: classId,
+      branchId: branchId,
+      dayUtc: day,
+      session: session,
+      status: AttendanceSessionStatus.notMarked,
+    );
   }
 
   Stream<List<MarkRecord>> watchMarksForClass({

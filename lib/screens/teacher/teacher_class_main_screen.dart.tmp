@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,7 +14,6 @@ import '../../data/firestore_repository.dart';
 import '../../models/attendance_record.dart';
 import '../../models/attendance_status.dart';
 import '../../models/class_model.dart';
-import '../../models/class_attendance_session.dart';
 import '../../models/student.dart';
 import '../../models/mark_record.dart';
 import '../../models/fee_record.dart';
@@ -64,17 +63,13 @@ class TeacherClassMainScreen extends StatelessWidget {
           children: [
             _StudentsTab(
                 className: className, medium: medium, branchId: branchId),
-            _AttendanceTabWithClass(
+            _AttendanceTab(
                 className: className,
                 medium: medium,
                 branchId: branchId,
-                whatsappLink: whatsappLink,
-                institutionId: institutionId),
-            _MonthlyTabWithClass(
-                className: className,
-                medium: medium,
-                branchId: branchId,
-                institutionId: institutionId),
+                whatsappLink: whatsappLink),
+            _MonthlyTab(
+                className: className, medium: medium, branchId: branchId),
             _MarksTab(
                 className: className, medium: medium, branchId: branchId, institutionId: institutionId),
             _FeesTab(
@@ -474,61 +469,6 @@ class _EditStudentDialogState extends State<_EditStudentDialog> {
 // ==========================================
 // 2. ATTENDANCE TAB
 // ==========================================
-
-class _AttendanceTabWithClass extends StatelessWidget {
-  const _AttendanceTabWithClass({
-    required this.className,
-    required this.medium,
-    required this.branchId,
-    required this.whatsappLink,
-    required this.institutionId,
-  });
-
-  final String className;
-  final String medium;
-  final String branchId;
-  final String whatsappLink;
-  final String institutionId;
-
-  @override
-  Widget build(BuildContext context) {
-    final repo = context.read<FirestoreRepository>();
-    return StreamBuilder<List<ClassModel>>(
-      stream: repo.watchClassesForBranch(branchId),
-      builder: (context, snap) {
-        if (snap.hasError) {
-          return Center(child: Text('Error: ${snap.error}'));
-        }
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final classes = snap.data!;
-        final classModel = classes.firstWhere(
-          (c) => c.className == className && c.medium == medium,
-          orElse: () => ClassModel(
-            id: '',
-            className: className,
-            medium: medium,
-            whatsappLink: whatsappLink,
-            institutionId: institutionId,
-            branchId: branchId,
-            colorValue: 0xFF1976D2,
-            attendanceMode: AttendanceMode.daily,
-          ),
-        );
-        return _AttendanceTab(
-          className: className,
-          medium: medium,
-          branchId: branchId,
-          whatsappLink: whatsappLink,
-          classId: classModel.id,
-          attendanceMode: classModel.attendanceMode,
-        );
-      },
-    );
-  }
-}
-
 class _AttendanceTab extends StatefulWidget {
   const _AttendanceTab({
     required this.className,
@@ -742,158 +682,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-  }
-
-  Future<void> _showDailyDetailsDialog(FirestoreRepository repo, List<Student> students) async {
-    final dateStr = DateFormat.yMMMMd().format(_dayUtc);
-    
-    // Fetch both FN and AN attendance records
-    final fnRecords = await repo.watchAttendanceForBranchOnDateWithSession(
-      branchId: widget.branchId,
-      dayUtc: _dayUtc,
-      session: AttendanceSession.fn,
-    ).first;
-    final anRecords = await repo.watchAttendanceForBranchOnDateWithSession(
-      branchId: widget.branchId,
-      dayUtc: _dayUtc,
-      session: AttendanceSession.an,
-    ).first;
-    
-    // Fetch session statuses
-    final fnSession = await repo.getClassAttendanceSession(
-      classId: widget.classId,
-      dayUtc: _dayUtc,
-      session: AttendanceSession.fn,
-    );
-    final anSession = await repo.getClassAttendanceSession(
-      classId: widget.classId,
-      dayUtc: _dayUtc,
-      session: AttendanceSession.an,
-    );
-    
-    final fnByStudent = {for (final r in fnRecords) r.studentId: r};
-    final anByStudent = {for (final r in anRecords) r.studentId: r};
-    
-    final fnStatus = fnSession?.status ?? AttendanceSessionStatus.notMarked;
-    final anStatus = anSession?.status ?? AttendanceSessionStatus.notMarked;
-
-    if (!mounted) return;
-    
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Daily Details - $dateStr'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Session Status Summary
-                _DailySessionStatusCard(
-                  session: AttendanceSession.fn,
-                  status: fnStatus,
-                  presentCount: fnRecords.where((r) => r.status == AttendanceStatus.present).length,
-                  absentCount: fnRecords.where((r) => r.status == AttendanceStatus.absent).length,
-                  lateCount: fnRecords.where((r) => r.status == AttendanceStatus.late).length,
-                ),
-                const SizedBox(height: 12),
-                _DailySessionStatusCard(
-                  session: AttendanceSession.an,
-                  status: anStatus,
-                  presentCount: anRecords.where((r) => r.status == AttendanceStatus.present).length,
-                  absentCount: anRecords.where((r) => r.status == AttendanceStatus.absent).length,
-                  lateCount: anRecords.where((r) => r.status == AttendanceStatus.late).length,
-                ),
-                const SizedBox(height: 16),
-                const Divider(),
-                const SizedBox(height: 8),
-                // Student List
-                Text('Student Details',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                ...students.map((s) {
-                  final fnRecord = fnByStudent[s.id];
-                  final anRecord = anByStudent[s.id];
-                  
-                  String fnDisplay;
-                  if (fnStatus == AttendanceSessionStatus.noClass) {
-                    fnDisplay = 'NC';
-                  } else if (fnRecord != null) {
-                    fnDisplay = fnRecord.status.label;
-                  } else {
-                    fnDisplay = 'Not Marked';
-                  }
-                  
-                  String anDisplay;
-                  if (anStatus == AttendanceSessionStatus.noClass) {
-                    anDisplay = 'NC';
-                  } else if (anRecord != null) {
-                    anDisplay = anRecord.status.label;
-                  } else {
-                    anDisplay = 'Not Marked';
-                  }
-                  
-                  Color fnColor;
-                  if (fnDisplay == 'NC') fnColor = Colors.grey;
-                  else if (fnDisplay == 'Present') fnColor = Colors.green;
-                  else if (fnDisplay == 'Late') fnColor = Colors.orange;
-                  else if (fnDisplay == 'Absent') fnColor = Colors.red;
-                  else fnColor = Colors.grey;
-                  
-                  Color anColor;
-                  if (anDisplay == 'NC') anColor = Colors.grey;
-                  else if (anDisplay == 'Present') anColor = Colors.green;
-                  else if (anDisplay == 'Late') anColor = Colors.orange;
-                  else if (anDisplay == 'Absent') anColor = Colors.red;
-                  else anColor = Colors.grey;
-                  
-                  return Card(
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundImage: s.photoUrl.isNotEmpty
-                            ? NetworkImage(s.photoUrl)
-                            : null,
-                        child: s.photoUrl.isEmpty ? const Icon(Icons.person) : null,
-                      ),
-                      title: Text(s.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text('Admission: ${s.admissionNumber}'),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text('FN', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-                              Text(fnDisplay, style: TextStyle(color: fnColor, fontWeight: FontWeight.bold, fontSize: 12)),
-                            ],
-                          ),
-                          const SizedBox(width: 16),
-                          Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text('AN', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-                              Text(anDisplay, style: TextStyle(color: anColor, fontWeight: FontWeight.bold, fontSize: 12)),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
   }
 
   void _sendAbsenteesToWhatsApp(
@@ -1172,20 +960,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                             onRestore: isNoClass ? () => _restoreSession(repo) : null,
                           ),
                         ),
-                        const Divider(),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.blue.shade700,
-                              side: BorderSide(color: Colors.blue.shade700),
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                            ),
-                            onPressed: () => _showDailyDetailsDialog(repo, students),
-                            icon: const Icon(Icons.view_list),
-                            label: const Text('View Daily Details (FN + AN)'),
-                          ),
-                        ),
                       ],
                       const Divider(),
                       Expanded(
@@ -1357,367 +1131,14 @@ class _StatusButton extends StatelessWidget {
 }
 
 // ==========================================
-// Attendance Session Helper Widgets
-// ==========================================
-
-class _SessionSelector extends StatelessWidget {
-  const _SessionSelector({
-    required this.selectedSession,
-    required this.onSessionChanged,
-    required this.fnStatus,
-    required this.anStatus,
-  });
-
-  final AttendanceSession selectedSession;
-  final ValueChanged<AttendanceSession> onSessionChanged;
-  final ClassAttendanceSession? fnStatus;
-  final ClassAttendanceSession? anStatus;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        _SessionChip(
-          session: AttendanceSession.fn,
-          label: 'FN – Forenoon',
-          isSelected: selectedSession == AttendanceSession.fn,
-          status: fnStatus?.status ?? AttendanceSessionStatus.notMarked,
-          onTap: () => onSessionChanged(AttendanceSession.fn),
-        ),
-        const SizedBox(width: 12),
-        _SessionChip(
-          session: AttendanceSession.an,
-          label: 'AN – Afternoon',
-          isSelected: selectedSession == AttendanceSession.an,
-          status: anStatus?.status ?? AttendanceSessionStatus.notMarked,
-          onTap: () => onSessionChanged(AttendanceSession.an),
-        ),
-      ],
-    );
-  }
-}
-
-class _SessionChip extends StatelessWidget {
-  const _SessionChip({
-    required this.session,
-    required this.label,
-    required this.isSelected,
-    required this.status,
-    required this.onTap,
-  });
-
-  final AttendanceSession session;
-  final String label;
-  final bool isSelected;
-  final AttendanceSessionStatus status;
-  final VoidCallback onTap;
-
-  Color get _statusColor {
-    switch (status) {
-      case AttendanceSessionStatus.completed:
-        return Colors.green.shade700;
-      case AttendanceSessionStatus.noClass:
-        return Colors.grey.shade700;
-      case AttendanceSessionStatus.notMarked:
-        return Colors.orange.shade700;
-    }
-  }
-
-  String get _statusLabel {
-    switch (status) {
-      case AttendanceSessionStatus.completed:
-        return '✓';
-      case AttendanceSessionStatus.noClass:
-        return '✕';
-      case AttendanceSessionStatus.notMarked:
-        return '○';
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? Theme.of(context).colorScheme.primary
-              : Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected
-                ? Theme.of(context).colorScheme.primary
-                : Colors.grey.shade300,
-            width: 2,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: isSelected
-                    ? Theme.of(context).colorScheme.onPrimary
-                    : Theme.of(context).colorScheme.onSurface,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              width: 20,
-              height: 20,
-              decoration: BoxDecoration(
-                color: _statusColor,
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: Text(
-                  _statusLabel,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SessionStatusSummary extends StatelessWidget {
-  const _SessionStatusSummary({
-    required this.session,
-    required this.status,
-    required this.presentCount,
-    required this.absentCount,
-    required this.lateCount,
-  });
-
-  final AttendanceSession session;
-  final AttendanceSessionStatus status;
-  final int presentCount;
-  final int absentCount;
-  final int lateCount;
-
-  @override
-  Widget build(BuildContext context) {
-    Color statusColor;
-    String statusText;
-    IconData statusIcon;
-
-    switch (status) {
-      case AttendanceSessionStatus.completed:
-        statusColor = Colors.green.shade700;
-        statusText = 'Completed';
-        statusIcon = Icons.check_circle;
-        break;
-      case AttendanceSessionStatus.noClass:
-        statusColor = Colors.grey.shade700;
-        statusText = 'No Class';
-        statusIcon = Icons.cancel;
-        break;
-      case AttendanceSessionStatus.notMarked:
-        statusColor = Colors.orange.shade700;
-        statusText = 'Not Marked';
-        statusIcon = Icons.radio_button_unchecked;
-        break;
-    }
-
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: statusColor.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: statusColor.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(statusIcon, color: statusColor, size: 20),
-              const SizedBox(width: 8),
-              Text(
-                '${session.label}: $statusText',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: statusColor,
-                ),
-              ),
-            ],
-          ),
-          if (status == AttendanceSessionStatus.completed) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 16,
-              runSpacing: 8,
-              children: [
-                _SummaryItem(
-                    label: 'Present', count: presentCount, color: Colors.green),
-                _SummaryItem(
-                    label: 'Absent', count: absentCount, color: Colors.red),
-                _SummaryItem(
-                    label: 'Late', count: lateCount, color: Colors.orange),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _SummaryItem extends StatelessWidget {
-  const _SummaryItem({
-    required this.label,
-    required this.count,
-    required this.color,
-  });
-
-  final String label;
-  final int count;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 6),
-        Text('$label: $count',
-            style: TextStyle(
-                fontWeight: FontWeight.bold, color: color, fontSize: 13)),
-      ],
-    );
-  }
-}
-
-class _NoClassActionButton extends StatelessWidget {
-  const _NoClassActionButton({
-    required this.session,
-    required this.isNoClass,
-    required this.onMarkNoClass,
-    required this.onRestore,
-  });
-
-  final AttendanceSession session;
-  final bool isNoClass;
-  final VoidCallback? onMarkNoClass;
-  final VoidCallback? onRestore;
-
-  @override
-  Widget build(BuildContext context) {
-    if (isNoClass) {
-      return OutlinedButton.icon(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: Colors.green.shade700,
-          side: BorderSide(color: Colors.green.shade700),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-        ),
-        onPressed: onRestore,
-        icon: const Icon(Icons.restore),
-        label: Text('Restore ${session.shortLabel} Session'),
-      );
-    } else {
-      return OutlinedButton.icon(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: Colors.red.shade700,
-          side: BorderSide(color: Colors.red.shade700),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-        ),
-        onPressed: onMarkNoClass,
-        icon: const Icon(Icons.block),
-        label: Text('Mark Entire ${session.label} as No Class'),
-      );
-    }
-  }
-}
-
-// ==========================================
 // 3. MONTHLY REPORT TAB
 // ==========================================
-
-class _MonthlyTabWithClass extends StatelessWidget {
-  const _MonthlyTabWithClass({
-    required this.className,
-    required this.medium,
-    required this.branchId,
-    required this.institutionId,
-  });
-
-  final String className;
-  final String medium;
-  final String branchId;
-  final String institutionId;
-
-  @override
-  Widget build(BuildContext context) {
-    final repo = context.read<FirestoreRepository>();
-    return StreamBuilder<List<ClassModel>>(
-      stream: repo.watchClassesForBranch(branchId),
-      builder: (context, snap) {
-        if (snap.hasError) {
-          return Center(child: Text('Error: ${snap.error}'));
-        }
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final classes = snap.data!;
-        final classModel = classes.firstWhere(
-          (c) => c.className == className && c.medium == medium,
-          orElse: () => ClassModel(
-            id: '',
-            className: className,
-            medium: medium,
-            whatsappLink: '',
-            institutionId: institutionId,
-            branchId: branchId,
-            colorValue: 0xFF1976D2,
-            attendanceMode: AttendanceMode.daily,
-          ),
-        );
-        return _MonthlyTab(
-          className: className,
-          medium: medium,
-          branchId: branchId,
-          classId: classModel.id,
-          attendanceMode: classModel.attendanceMode,
-        );
-      },
-    );
-  }
-}
-
 class _MonthlyTab extends StatefulWidget {
-  const _MonthlyTab({
-    required this.className,
-    required this.medium,
-    required this.branchId,
-    required this.classId,
-    required this.attendanceMode,
-  });
+  const _MonthlyTab(
+      {required this.className, required this.medium, required this.branchId});
   final String className;
   final String medium;
   final String branchId;
-  final String classId;
-  final AttendanceMode attendanceMode;
-
   @override
   State<_MonthlyTab> createState() => _MonthlyTabState();
 }
@@ -1725,7 +1146,6 @@ class _MonthlyTab extends StatefulWidget {
 class _MonthlyTabState extends State<_MonthlyTab> {
   late int _year;
   late int _month;
-  AttendanceSession? _selectedSession;
 
   @override
   void initState() {
@@ -1733,9 +1153,6 @@ class _MonthlyTabState extends State<_MonthlyTab> {
     final now = DateTime.now();
     _year = now.year;
     _month = now.month;
-    _selectedSession = widget.attendanceMode == AttendanceMode.twoSession
-        ? AttendanceSession.fn
-        : null;
   }
 
   void _prevMonth() => setState(() {
@@ -1763,38 +1180,18 @@ class _MonthlyTabState extends State<_MonthlyTab> {
   String get _monthLabel => DateFormat.yMMMM().format(DateTime(_year, _month));
   int get _daysInMonth => DateTime(_year, _month + 1, 0).day;
 
-  bool get _isTwoSession => widget.attendanceMode == AttendanceMode.twoSession;
-
   Future<void> _generateMonthlyReportPdf(
     List<Student> students,
     Map<String, Map<int, AttendanceStatus>> attendanceMap,
-    AttendanceSession? session,
   ) async {
     final pdf = pw.Document();
     final monthName = DateFormat.yMMMM().format(DateTime(_year, _month));
     final todayLabel = DateFormat.yMMMMd().format(DateTime.now());
     final days = List.generate(_daysInMonth, (index) => index + 1);
 
-    // Fetch session statuses for No Class handling
-    final repo = context.read<FirestoreRepository>();
-    final sessionStatuses = await repo.watchClassAttendanceSessionsInMonth(
-      classId: widget.classId,
-      year: _year,
-      month: _month,
-    ).first;
-
-    // Build a map of day -> session -> status for No Class detection
-    final noClassMap = <int, Set<AttendanceSession>>{};
-    for (final s in sessionStatuses) {
-      if (s.status == AttendanceSessionStatus.noClass) {
-        noClassMap.putIfAbsent(s.date.day, () => {}).add(s.session);
-      }
-    }
-
     int totalPresent = 0;
     int totalAbsent = 0;
     int totalLate = 0;
-    int totalNoClass = 0;
 
     final rows = students.map((student) {
       final dayMap = attendanceMap[student.id] ?? {};
@@ -1802,54 +1199,36 @@ class _MonthlyTabState extends State<_MonthlyTab> {
       int pCount = 0;
       int aCount = 0;
       int lCount = 0;
-      int ncCount = 0;
 
       for (final day in days) {
-        final isNoClassForSession = noClassMap[day]?.contains(session ?? AttendanceSession.daily) ?? false;
-        if (isNoClassForSession) {
-          row.add('NC');
-          ncCount++;
+        final status = dayMap[day];
+        if (status == AttendanceStatus.present) {
+          row.add('P');
+          pCount++;
+        } else if (status == AttendanceStatus.absent) {
+          row.add('A');
+          aCount++;
+        } else if (status == AttendanceStatus.late) {
+          row.add('L');
+          lCount++;
         } else {
-          final status = dayMap[day];
-          if (status == AttendanceStatus.present) {
-            row.add('P');
-            pCount++;
-          } else if (status == AttendanceStatus.absent) {
-            row.add('A');
-            aCount++;
-          } else if (status == AttendanceStatus.late) {
-            row.add('L');
-            lCount++;
-          } else {
-            row.add('-');
-          }
+          row.add('-');
         }
       }
 
       totalPresent += pCount;
       totalAbsent += aCount;
       totalLate += lCount;
-      totalNoClass += ncCount;
-
-      // For percentage calculation, exclude No Class from denominator
-      final attendedSessions = pCount + aCount + lCount;
-      final percentage = attendedSessions > 0
-          ? ((pCount + lCount) * 100 / attendedSessions).round()
-          : 0;
-
-      row.addAll(['$pCount', '$aCount', '$lCount', '$ncCount', '$percentage%']);
+      row.addAll(['$pCount', '$aCount', '$lCount']);
       return row;
     }).toList();
 
-    final sessionLabel = session?.label ?? 'Daily';
     final header = <String>[
       'Student Name',
       ...days.map((d) => '$d'),
       'P',
       'A',
       'L',
-      'NC',
-      '%',
     ];
 
     const int rowsPerPage = 25;
@@ -1868,7 +1247,7 @@ class _MonthlyTabState extends State<_MonthlyTab> {
         build: (context) => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.stretch,
           children: [
-            pw.Text('$sessionLabel Monthly Attendance Report',
+            pw.Text('Monthly Attendance Report',
                 style:
                     pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
             pw.SizedBox(height: 6),
@@ -1881,8 +1260,6 @@ class _MonthlyTabState extends State<_MonthlyTab> {
                     pw.Text('Class: ${widget.className} ${widget.medium}',
                         style: pw.TextStyle(fontSize: 10)),
                     pw.Text('Month: $monthName',
-                        style: pw.TextStyle(fontSize: 10)),
-                    pw.Text('Session: $sessionLabel',
                         style: pw.TextStyle(fontSize: 10)),
                   ],
                 ),
@@ -1898,7 +1275,7 @@ class _MonthlyTabState extends State<_MonthlyTab> {
                 border: pw.Border.all(color: PdfColors.grey400),
               ),
               child: pw.Text(
-                'Summary: Present $totalPresent  |  Absent $totalAbsent  |  Late $totalLate  |  No Class $totalNoClass',
+                'Summary: Present $totalPresent  |  Absent $totalAbsent  |  Late $totalLate',
                 style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
               ),
             ),
@@ -1908,18 +1285,17 @@ class _MonthlyTabState extends State<_MonthlyTab> {
                 border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
                 columnWidths: {
                   0: const pw.FixedColumnWidth(85),
-                  for (var i = 1; i < header.length - 4; i++)
+                  for (var i = 1; i < header.length - 3; i++)
                     i: const pw.FixedColumnWidth(18),
-                  header.length - 4: const pw.FixedColumnWidth(20),
                   header.length - 3: const pw.FixedColumnWidth(20),
                   header.length - 2: const pw.FixedColumnWidth(20),
-                  header.length - 1: const pw.FixedColumnWidth(30),
+                  header.length - 1: const pw.FixedColumnWidth(20),
                 },
                 children: [
                   pw.TableRow(
                     decoration: pw.BoxDecoration(color: PdfColors.grey300),
                     children: header.map((h) {
-                      final isSummary = h == 'P' || h == 'A' || h == 'L' || h == 'NC' || h == '%';
+                      final isSummary = h == 'P' || h == 'A' || h == 'L';
                       return pw.Padding(
                         padding: const pw.EdgeInsets.symmetric(
                             horizontal: 3, vertical: 4),
@@ -1949,7 +1325,7 @@ class _MonthlyTabState extends State<_MonthlyTab> {
                           ),
                         ),
                         ...row.sublist(1).map((cell) {
-                          final isSummary = row.indexOf(cell) >= row.length - 4;
+                          final isSummary = row.indexOf(cell) >= row.length - 3;
                           return pw.Padding(
                             padding: const pw.EdgeInsets.symmetric(
                                 horizontal: 2, vertical: 3),
@@ -1976,7 +1352,7 @@ class _MonthlyTabState extends State<_MonthlyTab> {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text(
-                    'Legend: P = Present  |  A = Absent  |  L = Late  |  NC = No Class  |  - = Not Marked  |  % = Attendance % (excl. NC)',
+                    'Legend: P = Present  |  A = Absent  |  L = Late  |  - = No Entry',
                     style: pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
                 pw.Text('Page ${pageIndex + 1} of $totalPages',
                     style: pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
@@ -1993,15 +1369,14 @@ class _MonthlyTabState extends State<_MonthlyTab> {
           widget.className.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_');
       final safeMedium =
           widget.medium.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_');
-      final sessionSuffix = session != null ? '_${session.name.toUpperCase()}' : '';
       final file = File(
-          '${tempDir.path}/attendance_report_${safeClass}_${safeMedium}_${_year}_$_month$sessionSuffix.pdf');
+          '${tempDir.path}/attendance_report_${safeClass}_${safeMedium}_${_year}_$_month.pdf');
       final bytes = await pdf.save();
       await file.writeAsBytes(bytes, flush: true);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$sessionLabel report generated successfully!')),
+        SnackBar(content: Text('Report generated successfully!')),
       );
 
       await OpenFilex.open(file.path);
@@ -2017,7 +1392,6 @@ class _MonthlyTabState extends State<_MonthlyTab> {
   Widget build(BuildContext context) {
     final repo = context.read<FirestoreRepository>();
     final colorScheme = Theme.of(context).colorScheme;
-    final isTwoSession = widget.attendanceMode == AttendanceMode.twoSession;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2048,8 +1422,6 @@ class _MonthlyTabState extends State<_MonthlyTab> {
               _LegendDot(color: Colors.green.shade600, label: 'Present'),
               _LegendDot(color: Colors.red.shade400, label: 'Absent'),
               _LegendDot(color: Colors.orange.shade400, label: 'Late'),
-              if (isTwoSession)
-                _LegendDot(color: Colors.grey.shade400, label: 'No Class'),
             ],
           ),
         ),
@@ -2072,67 +1444,6 @@ class _MonthlyTabState extends State<_MonthlyTab> {
                 return const Center(child: Text('No students in this class.'));
               }
 
-              // For two_session classes, show FN/AN report buttons
-              if (isTwoSession) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: FilledButton.icon(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: Colors.blue.shade700,
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                              ),
-                              onPressed: () async {
-                                setState(() => _selectedSession = AttendanceSession.fn);
-                                // Trigger rebuild to load FN data
-                              },
-                              icon: const Icon(Icons.picture_as_pdf),
-                              label: const Text('FN Report'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: FilledButton.icon(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: Colors.purple.shade700,
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                              ),
-                              onPressed: () async {
-                                setState(() => _selectedSession = AttendanceSession.an);
-                                // Trigger rebuild to load AN data
-                              },
-                              icon: const Icon(Icons.picture_as_pdf),
-                              label: const Text('AN Report'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Expanded(
-                      child: _MonthlyReportView(
-                        repo: repo,
-                        students: students,
-                        branchId: widget.branchId,
-                        classId: widget.classId,
-                        year: _year,
-                        month: _month,
-                        daysInMonth: _daysInMonth,
-                        selectedSession: _selectedSession ?? AttendanceSession.fn,
-                        onGeneratePdf: (attMap) => _generateMonthlyReportPdf(
-                            students, attMap, _selectedSession),
-                      ),
-                    ),
-                  ],
-                );
-              }
-
-              // Daily mode - single report
               return StreamBuilder<List<AttendanceRecord>>(
                 stream: repo.watchAttendanceForBranchInMonth(
                     branchId: widget.branchId, year: _year, month: _month),
@@ -2157,7 +1468,7 @@ class _MonthlyTabState extends State<_MonthlyTab> {
                             padding: const EdgeInsets.symmetric(vertical: 12),
                           ),
                           onPressed: () => _generateMonthlyReportPdf(
-                              students, attMap, null),
+                              students, attMap),
                           icon: const Icon(Icons.picture_as_pdf),
                           label: const Text('Monthly Report'),
                         ),
@@ -2286,90 +1597,6 @@ class _MonthlyTabState extends State<_MonthlyTab> {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _DailySessionStatusCard extends StatelessWidget {
-  const _DailySessionStatusCard({
-    required this.session,
-    required this.status,
-    required this.presentCount,
-    required this.absentCount,
-    required this.lateCount,
-  });
-
-  final AttendanceSession session;
-  final AttendanceSessionStatus status;
-  final int presentCount;
-  final int absentCount;
-  final int lateCount;
-
-  @override
-  Widget build(BuildContext context) {
-    Color statusColor;
-    String statusText;
-    IconData statusIcon;
-
-    switch (status) {
-      case AttendanceSessionStatus.completed:
-        statusColor = Colors.green.shade700;
-        statusText = 'Completed';
-        statusIcon = Icons.check_circle;
-        break;
-      case AttendanceSessionStatus.noClass:
-        statusColor = Colors.grey.shade700;
-        statusText = 'No Class';
-        statusIcon = Icons.cancel;
-        break;
-      case AttendanceSessionStatus.notMarked:
-        statusColor = Colors.orange.shade700;
-        statusText = 'Not Marked';
-        statusIcon = Icons.radio_button_unchecked;
-        break;
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: statusColor.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: statusColor.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(statusIcon, color: statusColor, size: 20),
-              const SizedBox(width: 8),
-              Text(
-                '${session.label}: $statusText',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: statusColor,
-                ),
-              ),
-            ],
-          ),
-          if (status == AttendanceSessionStatus.completed) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 16,
-              runSpacing: 8,
-              children: [
-                _SummaryItem(
-                    label: 'Present', count: presentCount, color: Colors.green),
-                _SummaryItem(
-                    label: 'Absent', count: absentCount, color: Colors.red),
-                _SummaryItem(
-                    label: 'Late', count: lateCount, color: Colors.orange),
-              ],
-            ),
-          ],
-        ],
-      ),
     );
   }
 }

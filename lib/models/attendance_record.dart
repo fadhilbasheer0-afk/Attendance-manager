@@ -9,6 +9,7 @@ class AttendanceRecord {
     required this.institutionId,
     required this.branchId,
     required this.date,
+    required this.session,
     required this.status,
     required this.markedBy,
   });
@@ -18,6 +19,7 @@ class AttendanceRecord {
   final String institutionId;
   final String branchId;
   final DateTime date;
+  final AttendanceSession session;
   final AttendanceStatus status;
   final String markedBy;
 
@@ -39,6 +41,7 @@ class AttendanceRecord {
       institutionId: (data['institutionId'] as String?) ?? '',
       branchId: (data['branchId'] as String?) ?? '',
       date: date,
+      session: attendanceSessionFromString(data['session'] as String?) ?? AttendanceSession.daily,
       status: attendanceStatusFromString(data['status'] as String?) ??
           AttendanceStatus.present,
       markedBy: (data['markedBy'] as String?) ?? '',
@@ -51,7 +54,31 @@ class AttendanceRecord {
         'branchId': branchId,
         'date':
             Timestamp.fromDate(DateTime.utc(date.year, date.month, date.day)),
+        'session': session.firestoreValue,
         'status': status.firestoreValue,
         'markedBy': markedBy,
       };
+
+  /// Creates a copy with updated fields
+  AttendanceRecord copyWith({
+    String? id,
+    String? studentId,
+    String? institutionId,
+    String? branchId,
+    DateTime? date,
+    AttendanceSession? session,
+    AttendanceStatus? status,
+    String? markedBy,
+  }) {
+    return AttendanceRecord(
+      id: id ?? this.id,
+      studentId: studentId ?? this.studentId,
+      institutionId: institutionId ?? this.institutionId,
+      branchId: branchId ?? this.branchId,
+      date: date ?? this.date,
+      session: session ?? this.session,
+      status: status ?? this.status,
+      markedBy: markedBy ?? this.markedBy,
+    );
+  }
 }

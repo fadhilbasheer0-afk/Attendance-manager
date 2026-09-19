@@ -167,5 +167,18 @@ service cloud.firestore {
       allow delete: if isAppAdmin()
         || isTeacherInBranch(resource.data.branchId);
     }
+
+    match /classAttendanceSessions/{sessionId} {
+      allow read: if signedIn();
+
+      allow create: if isAppAdmin()
+        || isTeacherInBranch(request.resource.data.branchId);
+
+      allow update: if isAppAdmin()
+        || isTeacherInBranch(resource.data.branchId);
+
+      allow delete: if isAppAdmin()
+        || isTeacherInBranch(resource.data.branchId);
+    }
   }
 }

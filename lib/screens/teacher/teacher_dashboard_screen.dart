@@ -453,6 +453,8 @@ class TeacherDashboardScreen extends StatelessWidget {
         TextEditingController(text: classModel?.whatsappLink);
 
     int selectedColor = classModel?.colorValue ?? presetColors.first;
+    AttendanceMode selectedAttendanceMode =
+        classModel?.attendanceMode ?? AttendanceMode.daily;
 
     showDialog(
       context: context,
@@ -509,6 +511,26 @@ class TeacherDashboardScreen extends StatelessWidget {
                             return 'Must be a valid WhatsApp invite link';
                           }
                           return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<AttendanceMode>(
+                        decoration: const InputDecoration(
+                          labelText: 'Attendance Mode',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.schedule),
+                        ),
+                        initialValue: selectedAttendanceMode,
+                        items: AttendanceMode.values.map((mode) {
+                          return DropdownMenuItem<AttendanceMode>(
+                            value: mode,
+                            child: Text(mode.label),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => selectedAttendanceMode = val);
+                          }
                         },
                       ),
                       const SizedBox(height: 20),
@@ -580,6 +602,7 @@ class TeacherDashboardScreen extends StatelessWidget {
                             whatsappLink: linkController.text.trim(),
                             branchId: branchId,
                             colorValue: selectedColor,
+                            attendanceMode: selectedAttendanceMode,
                           );
                         } else {
                           await repo.addClass(
@@ -588,6 +611,7 @@ class TeacherDashboardScreen extends StatelessWidget {
                             whatsappLink: linkController.text.trim(),
                             branchId: branchId,
                             colorValue: selectedColor,
+                            attendanceMode: selectedAttendanceMode,
                           );
                           // Small delay to allow Firestore to propagate
                           await Future.delayed(const Duration(milliseconds: 300));
